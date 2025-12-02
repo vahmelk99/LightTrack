@@ -1,0 +1,45 @@
+╔══════════════════════════════════════════════════════════════╗
+║         LightTrack Multi-Object Tracker - Quick Ref         ║
+╚══════════════════════════════════════════════════════════════╝
+
+┌─ RUN ─────────────────────────────────────────────────────────┐
+│ CPU Mode:  ./tracking/run_multi_tracker.sh                    │
+│ GPU Mode:  ./tracking/run_multi_tracker.sh -d cuda            │
+│ Video:     ./tracking/run_multi_tracker.sh -v video.mp4       │
+└───────────────────────────────────────────────────────────────┘
+
+┌─ CONTROLS ────────────────────────────────────────────────────┐
+│ Selection Mode:                                               │
+│   • Click & Drag → Draw bounding box                          │
+│   • SPACE        → Start tracking                             │
+│   • C            → Clear selections                           │
+│                                                               │
+│ Tracking Mode:                                                │
+│   • P            → Pause/Resume                               │
+│   • R            → Reset (back to selection)                  │
+│   • Q            → Quit                                       │
+└───────────────────────────────────────────────────────────────┘
+
+┌─ TEST ────────────────────────────────────────────────────────┐
+│ cd tracking                                                   │
+│ python test_multi_tracker_import.py    # Test imports        │
+│ python test_model_load_cpu.py          # Test CPU mode       │
+└───────────────────────────────────────────────────────────────┘
+
+┌─ HELP ────────────────────────────────────────────────────────┐
+│ ./tracking/run_multi_tracker.sh --help                        │
+│                                                               │
+│ Documentation:                                                │
+│   • tracking/QUICK_START.md                                   │
+│   • tracking/MULTI_OBJECT_TRACKER_README.md                   │
+│   • CPU_MODE_FIX.md                                           │
+│   • FIXES_SUMMARY.md                                          │
+└───────────────────────────────────────────────────────────────┘
+
+┌─ STATUS ──────────────────────────────────────────────────────┐
+│ ✓ All fixes applied                                           │
+│ ✓ CPU mode working                                            │
+│ ✓ GPU mode working                                            │
+│ ✓ Tests passing                                               │
+│ ✓ Ready to use                                                │
+└───────────────────────────────────────────────────────────────┘
