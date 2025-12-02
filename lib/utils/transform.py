@@ -41,6 +41,7 @@ def get_oup_pos(sta_num):
 
 
 def name2path_backhead(path_name, sta_num=(4, 4, 4, 4, 4), head_only=False, backbone_only=False):
+    print(path_name)
     backbone_name, head_name = path_name.split('+cls_')
     if not head_only:
         # process backbone
