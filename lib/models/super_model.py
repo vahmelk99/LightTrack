@@ -43,8 +43,8 @@ class Super_model(nn.Module):
         self.grid_to_search_x = x * self.stride + self.search_size // 2
         self.grid_to_search_y = y * self.stride + self.search_size // 2
 
-        self.grid_to_search_x = torch.Tensor(self.grid_to_search_x).unsqueeze(0).unsqueeze(0).cuda()
-        self.grid_to_search_y = torch.Tensor(self.grid_to_search_y).unsqueeze(0).unsqueeze(0).cuda()
+        self.grid_to_search_x = torch.Tensor(self.grid_to_search_x).unsqueeze(0).unsqueeze(0)
+        self.grid_to_search_y = torch.Tensor(self.grid_to_search_y).unsqueeze(0).unsqueeze(0)
 
         self.grid_to_search_x = self.grid_to_search_x.repeat(self.batch, 1, 1, 1)
         self.grid_to_search_y = self.grid_to_search_y.repeat(self.batch, 1, 1, 1)

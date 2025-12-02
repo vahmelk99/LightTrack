@@ -223,7 +223,7 @@ class reg_pred_head(nn.Module):
         # adjust scale
         if not self.linear_reg:
             self.adjust = nn.Parameter(0.1 * torch.ones(1))
-            self.bias = nn.Parameter(torch.Tensor(1.0 * torch.ones(1, 4, 1, 1)).cuda())
+            self.bias = nn.Parameter(torch.Tensor(1.0 * torch.ones(1, 4, 1, 1)))
 
     def forward(self, x):
         if self.linear_reg:

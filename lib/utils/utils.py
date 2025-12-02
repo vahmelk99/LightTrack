@@ -697,8 +697,8 @@ def remove_prefix(state_dict, prefix):
 def load_pretrain(model, pretrained_path, print_unuse=True):
     print('load pretrained model from {}'.format(pretrained_path))
 
-    device = torch.cuda.current_device()
-    pretrained_dict = torch.load(pretrained_path, map_location=lambda storage, loc: storage.cuda(device))
+    # Load to CPU first, then move to appropriate device
+    pretrained_dict = torch.load(pretrained_path, map_location='cpu')
     # print(pretrained_dict.keys())
     if "state_dict" in pretrained_dict.keys():
         pretrained_dict = remove_prefix(pretrained_dict['state_dict'], 'module.')
