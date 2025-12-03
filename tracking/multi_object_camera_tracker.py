@@ -1,5 +1,11 @@
 import _init_paths
 import os
+import sys
+
+# Fix Qt platform plugin issues on Linux
+os.environ['QT_QPA_PLATFORM'] = 'xcb'  # Force X11 backend
+os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = ''
+
 import cv2
 import torch
 import argparse
@@ -10,6 +16,12 @@ import lib.models.models as models
 from easydict import EasyDict as edict
 from lib.utils.utils import load_pretrain, cxy_wh_2_rect
 from lib.tracker.lighttrack import Lighttrack
+
+try:
+    import mss
+    MSS_AVAILABLE = True
+except ImportError:
+    MSS_AVAILABLE = False
 
 
 def parse_args():
@@ -23,6 +35,8 @@ def parse_args():
                         help='model architecture path')
     parser.add_argument('--camera', type=int, default=0, help='camera device id')
     parser.add_argument('--video_file', type=str, default=None, help='video file path (optional, instead of camera)')
+    parser.add_argument('--no_initial_select', action='store_true', help='skip initial selection, start tracking immediately')
+    parser.add_argument('--desktop', action='store_true', help='capture desktop screen instead of camera/video')
     args = parser.parse_args()
     return args
 
@@ -36,6 +50,7 @@ class MultiObjectTracker:
         self.siam_info = siam_info
         self.args = args
         self.next_id = 0
+        self.available_ids = []  # Track available IDs from removed objects
         
     def add_object(self, frame, bbox):
         """Add a new object to track
@@ -56,15 +71,25 @@ class MultiObjectTracker:
         # Initialize tracker
         state = tracker.init(frame, target_pos, target_sz, self.model)
         
-        self.trackers.append(tracker)
-        self.states.append(state)
-        
         # Generate random color for this object
-        color = tuple(np.random.randint(0, 255, 3).tolist())
-        self.colors.append(color)
+        color = tuple(np.random.randint(50, 255, 3).tolist())
         
-        obj_id = self.next_id
-        self.next_id += 1
+        # Reuse available ID if any, otherwise use next_id
+        if self.available_ids:
+            obj_id = min(self.available_ids)  # Use the smallest available ID
+            self.available_ids.remove(obj_id)
+            
+            # Insert at the correct position
+            self.trackers.insert(obj_id, tracker)
+            self.states.insert(obj_id, state)
+            self.colors.insert(obj_id, color)
+        else:
+            obj_id = self.next_id
+            self.next_id += 1
+            
+            self.trackers.append(tracker)
+            self.states.append(state)
+            self.colors.append(color)
         
         return obj_id
     
@@ -94,6 +119,12 @@ class MultiObjectTracker:
             del self.trackers[obj_id]
             del self.states[obj_id]
             del self.colors[obj_id]
+            
+            # Add this ID to available IDs for reuse
+            if obj_id not in self.available_ids:
+                self.available_ids.append(obj_id)
+                self.available_ids.sort()
+            
             return True
         return False
     
@@ -103,6 +134,7 @@ class MultiObjectTracker:
         self.states.clear()
         self.colors.clear()
         self.next_id = 0
+        self.available_ids.clear()
 
 
 class BBoxSelector:
@@ -111,8 +143,12 @@ class BBoxSelector:
         self.current_box = None
         self.drawing = False
         self.start_point = None
+        self.enabled = True  # Can be disabled during tracking
         
     def mouse_callback(self, event, x, y, flags, param):
+        if not self.enabled:
+            return
+            
         if event == cv2.EVENT_LBUTTONDOWN:
             self.drawing = True
             self.start_point = (x, y)
@@ -194,45 +230,90 @@ def main():
     # Initialize multi-object tracker
     multi_tracker = MultiObjectTracker(siam_info, siam_net, args)
     
-    # Open camera or video file
-    if args.video_file:
+    # Open camera, video file, or desktop capture
+    cap = None
+    sct = None
+    monitor = None
+    
+    if args.desktop:
+        if not MSS_AVAILABLE:
+            print("Error: mss library not installed. Install with: pip install mss")
+            return
+        sct = mss.mss()
+        monitor = sct.monitors[1]  # Primary monitor
+        print(f'Desktop capture mode: {monitor["width"]}x{monitor["height"]}')
+    elif args.video_file:
         cap = cv2.VideoCapture(args.video_file)
         print(f'Opened video file: {args.video_file}')
+        if not cap.isOpened():
+            print("Error: Cannot open video file")
+            return
     else:
         cap = cv2.VideoCapture(args.camera)
         print(f'Opened camera device: {args.camera}')
+        if not cap.isOpened():
+            print("Error: Cannot open camera")
+            return
     
-    if not cap.isOpened():
-        print("Error: Cannot open camera/video")
-        return
+    bbox_selector = BBoxSelector()
     
     # Set up window
     window_name = 'Multi-Object Tracker'
-    cv2.namedWindow(window_name)
+    print(f"Creating display window...")
     
-    bbox_selector = BBoxSelector()
-    cv2.setMouseCallback(window_name, bbox_selector.mouse_callback)
+    try:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, 1280, 720)
+        cv2.setMouseCallback(window_name, bbox_selector.mouse_callback)
+        print("✓ Window created successfully")
+    except Exception as e:
+        print(f"✗ Error creating window: {e}")
+        print("\nTroubleshooting:")
+        print("1. Make sure you have X11 or Wayland display server running")
+        print("2. Try: export DISPLAY=:0")
+        print("3. Check if you can run: xclock (to test X11)")
+        print("4. Install opencv-python-headless if running on a server without display")
+        return
     
-    mode = 'select'  # 'select' or 'track'
+    mode = 'track' if args.no_initial_select else 'select'
     paused = False
     
     print("\n=== Multi-Object Tracking Instructions ===")
-    print("SELECTION MODE:")
-    print("  - Draw boxes around objects to track")
-    print("  - Press SPACE to start tracking")
-    print("  - Press 'c' to clear all selections")
+    if not args.no_initial_select:
+        print("SELECTION MODE:")
+        print("  - Draw boxes around objects to track")
+        print("  - Press SPACE to start tracking")
+        print("  - Press 'c' to clear all selections")
     print("\nTRACKING MODE:")
+    print("  - Draw new boxes to add objects during tracking")
+    print("  - Press number keys (0-9) to remove object by ID")
     print("  - Press 'p' to pause/resume")
     print("  - Press 'r' to reset and select new objects")
     print("  - Press 'q' to quit")
     print("==========================================\n")
     
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Cannot read frame")
+    # Read first frame
+    try:
+        if sct:
+            screenshot = sct.grab(monitor)
+            frame = np.array(screenshot)
+            print(f"Desktop capture: {frame.shape}, dtype={frame.dtype}")
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            print(f"After conversion: {frame.shape}, dtype={frame.dtype}")
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                print("Error: Cannot read frame")
+                return
+            print(f"Frame captured: {frame.shape}, dtype={frame.dtype}")
+    except Exception as e:
+        print(f"Error capturing first frame: {e}")
+        import traceback
+        traceback.print_exc()
         return
     
     selection_frame = frame.copy()
+    display_frame = frame.copy()  # Initialize for paused state
     
     while True:
         if mode == 'select':
@@ -255,29 +336,57 @@ def main():
             cv2.imshow(window_name, display_frame)
             
         else:  # tracking mode
+            # Capture frame
+            if sct:
+                screenshot = sct.grab(monitor)
+                frame = np.array(screenshot)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+            else:
+                if not paused:
+                    ret, frame = cap.read()
+                    if not ret:
+                        print("End of video/camera stream")
+                        break
+            
             if not paused:
-                ret, frame = cap.read()
-                if not ret:
-                    print("End of video/camera stream")
-                    break
-                
                 # Convert to RGB for tracker
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Track all objects
-                tracked_boxes = multi_tracker.track_all(rgb_frame)
+                # Check if new objects were drawn
+                new_boxes = bbox_selector.get_boxes()
+                if new_boxes:
+                    with torch.no_grad():
+                        for bbox in new_boxes:
+                            obj_id = multi_tracker.add_object(rgb_frame, bbox)
+                            print(f"Added new object with ID: {obj_id}")
+                    bbox_selector.clear()
                 
-                # Draw results
-                display_frame = draw_boxes(frame, tracked_boxes, multi_tracker.colors)
+                # Track all objects (only if there are objects to track)
+                if len(multi_tracker.trackers) > 0:
+                    tracked_boxes = multi_tracker.track_all(rgb_frame)
+                    display_frame = draw_boxes(frame, tracked_boxes, multi_tracker.colors)
+                else:
+                    display_frame = frame.copy()
+                
+                # Draw current box being drawn
+                if bbox_selector.current_box:
+                    x, y, w, h = bbox_selector.current_box
+                    cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
                 
                 status = "PAUSED" if paused else "TRACKING"
-                cv2.putText(display_frame, f"{status} - 'p' pause, 'r' reset, 'q' quit", 
+                cv2.putText(display_frame, f"{status} - Draw to add, 0-9 to remove", 
                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 cv2.putText(display_frame, f"Objects: {len(multi_tracker.trackers)}", 
                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
+                if len(multi_tracker.trackers) == 0:
+                    cv2.putText(display_frame, "Draw boxes to add objects", 
+                               (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                
                 cv2.imshow(window_name, display_frame)
             else:
+                # When paused, just show the last frame
+                cv2.imshow(window_name, display_frame)
                 cv2.waitKey(10)
         
         key = cv2.waitKey(1) & 0xFF
@@ -296,6 +405,7 @@ def main():
                         multi_tracker.add_object(rgb_frame, bbox)
                 
                 mode = 'track'
+                bbox_selector.clear()
                 print("Tracking started!")
             else:
                 print("No objects selected!")
@@ -308,16 +418,32 @@ def main():
             multi_tracker.clear_all()
             bbox_selector.clear()
             mode = 'select'
-            ret, frame = cap.read()
-            if ret:
+            if sct:
+                screenshot = sct.grab(monitor)
+                frame = np.array(screenshot)
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
                 selection_frame = frame.copy()
+            else:
+                ret, frame = cap.read()
+                if ret:
+                    selection_frame = frame.copy()
             print("Reset to selection mode")
         elif key == ord('p') and mode == 'track':
             # Pause/resume
             paused = not paused
             print("Paused" if paused else "Resumed")
+        elif mode == 'track' and key >= ord('0') and key <= ord('9'):
+            # Remove object by ID
+            obj_id = key - ord('0')
+            if multi_tracker.remove_object(obj_id):
+                print(f"Removed object ID: {obj_id}")
+            else:
+                print(f"No object with ID: {obj_id}")
     
-    cap.release()
+    if cap:
+        cap.release()
+    if sct:
+        sct.close()
     cv2.destroyAllWindows()
     print("Tracking ended")
 
