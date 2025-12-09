@@ -1,0 +1,5 @@
+lib/
+lib/*
+build/
+build/*
+*.pyc
